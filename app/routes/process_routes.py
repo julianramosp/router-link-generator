@@ -8,21 +8,24 @@ Takes an ordered list of stops (addresses/intersections) and:
     - intersections (e.g., "Main St & 1st Ave", "Main St and 1st Ave", "Broadway @ 7th", "Hwy 12 / County Rd A")
 - Optionally splits stops into segments to respect Google Directions API waypoint limits.
 - Calls Google Directions API for each segment (optional).
-- Builds Google Maps URL(s) for each segment and for the full route using mobile-friendly chunks:
-    - max 9 stops per URL
-    - overlap 1 stop between URLs for continuity
+- Builds Google Maps URL(s) for each segment and for the full route using mobile-friendly CHAINED chunks:
+    - URL = origin + up to N waypoints + destination
+- ALSO builds "My Location" variants (origin omitted) for driver-first behavior on mobile.
 - Returns a structured dictionary ready for CLI, API, or UI.
 """
 
 from __future__ import annotations
 
-from typing import List, Dict, Optional
+from typing import List, Dict
 import re
 import pandas as pd
 
 from app.services.google_directions import get_directions, GoogleMapsError
-from app.routes.generate_links import google_maps_links_from_addresses
-
+from app.routes.generate_links import (
+    google_maps_links_from_addresses,
+    google_maps_my_location_links_from_addresses,
+    split_stops_for_mobile_chain,
+)
 
 # ---- Limits / tuning knobs ----
 
@@ -30,10 +33,9 @@ from app.routes.generate_links import google_maps_links_from_addresses
 # segment total stops <= MAX_WAYPOINTS + 2 (origin + destination + waypoints)
 MAX_WAYPOINTS = 7
 
-# Mobile-friendly URL chunking:
-# total stops per URL (origin + waypoints + destination) <= 9
-MAX_STOPS_PER_URL = 9
-URL_OVERLAP = 1
+# Mobile-friendly URL chunking (CHAINED):
+# URL total stops = MAX_URL_WAYPOINTS + 2
+MAX_URL_WAYPOINTS = 7  # => 9 total stops per URL
 
 
 # ---- Cleaning + validation ----
@@ -58,6 +60,10 @@ def clean_address_line(line: str) -> str:
     # Remove leading stop numbers with punctuation: "1." or "1)" (safe)
     s = re.sub(r"^\s*\d+\s*[\.\)]\s*", "", s)
 
+    # Remove leading stop index (1–2 digits) like "1 Bus Garage" or "12 Verona Area..."
+    # but do NOT remove real house numbers like "154 West End Cir" or "1871 County Hwy PB"
+    s = re.sub(r"^\s*\d{1,2}\s+(?=\S)", "", s)
+
     # Remove a leading "STOP TIME STOP" pattern if it exists:
     # e.g. "1 06:38 am 1 1871 County Hwy PB"
     s = re.sub(
@@ -68,16 +74,9 @@ def clean_address_line(line: str) -> str:
     )
 
     # Normalize intersection markers:
-    # "A&B" -> "A & B"
     s = re.sub(r"\s*&\s*", " & ", s)
-
-    # "A and B" (keep as-is but normalize spacing)
     s = re.sub(r"\s+\band\b\s+", " and ", s, flags=re.IGNORECASE)
-
-    # "A/B" -> "A / B"
     s = re.sub(r"\s*/\s*", " / ", s)
-
-    # "A@B" -> "A @ B"
     s = re.sub(r"\s*@\s*", " @ ", s)
 
     # Collapse repeated whitespace
@@ -107,16 +106,27 @@ def is_valid_stop(line: str) -> bool:
     if _NUMERIC_ADDRESS_PATTERN.match(s):
         return True
 
-    # Intersection pattern: "A & B", "A and B", "A / B", "A @ B"
     if _INTERSECTION_PATTERN.search(s):
-        # Avoid accepting junk like "&" only
-        left_right = _INTERSECTION_PATTERN.search(s)
-        if left_right:
-            left = (left_right.group(1) or "").strip()
-            right = (left_right.group(2) or "").strip()
+        lr = _INTERSECTION_PATTERN.search(s)
+        if lr:
+            left = (lr.group(1) or "").strip()
+            right = (lr.group(2) or "").strip()
             return bool(left) and bool(right)
 
     return False
+
+
+def drop_leading_bus_stop(stops: List[str]) -> List[str]:
+    """
+    Remove leading 'Bus Stop' header if present as the first stop.
+    Keep it if it appears later (could be a real label).
+    """
+    if not stops:
+        return stops
+    first = stops[0].strip().lower()
+    if first.startswith("bus stop"):
+        return stops[1:]
+    return stops
 
 
 # ---- Segmentation for Directions API ----
@@ -133,8 +143,6 @@ def split_stops_into_segments(stops: List[str], max_waypoints: int = MAX_WAYPOIN
     current: List[str] = [stops[0]]
 
     for stop in stops[1:]:
-        # max points in a segment = origin + destination + max_waypoints
-        # => total stops in segment <= max_waypoints + 2
         if len(current) >= (max_waypoints + 2):
             segments.append(current)
             current = [current[-1], stop]  # overlap last stop
@@ -147,6 +155,35 @@ def split_stops_into_segments(stops: List[str], max_waypoints: int = MAX_WAYPOIN
     return segments
 
 
+# ---- Internal validation for chunking ----
+
+def _assert_chained_coverage(stops: List[str], chunks: List[List[str]]) -> None:
+    """
+    Ensure chunks cover all stops in order without loss/reordering,
+    and ensure chaining (end of chunk i == start of chunk i+1).
+    """
+    if len(stops) < 2:
+        return
+    if not chunks:
+        raise ValueError("No chunks produced for a non-empty stop list.")
+
+    covered = [chunks[0][0]]
+    for ch in chunks:
+        covered.extend(ch[1:])
+
+    if covered != stops:
+        raise ValueError(
+            "Chunking lost or reordered stops.\n"
+            f"Expected {len(stops)} stops, covered {len(covered)}.\n"
+            f"First expected: {stops[:3]}\nFirst covered: {covered[:3]}\n"
+            f"Last expected: {stops[-3:]}\nLast covered: {covered[-3:]}"
+        )
+
+    for a, b in zip(chunks, chunks[1:]):
+        if a[-1] != b[0]:
+            raise ValueError("Chunk chaining broken (end != next start).")
+
+
 # ---- Core route processing ----
 
 def process_route(
@@ -157,31 +194,19 @@ def process_route(
 ) -> Dict:
     """
     Process a single ordered route (already roughly extracted).
-
-    Returns:
-      {
-        route_id, route_type,
-        total_stops, total_segments,
-        google_maps_url, google_maps_urls,
-        segments: [
-          {
-            segment_index,
-            origin, destination, waypoints,
-            google_maps_url, google_maps_urls,
-            directions, error
-          }, ...
-        ]
-      }
     """
 
-    # Clean + validate stops (keep intersections)
+    # 1) Clean + validate stops (keep intersections)
     cleaned_stops: List[str] = []
     for s in stops:
         c = clean_address_line(str(s))
         if is_valid_stop(c):
             cleaned_stops.append(c)
 
-    # If we have less than 2 usable stops, return empty-ish result
+    # 1.5) Drop "Bus Stop" header if it appears as the first stop
+    cleaned_stops = drop_leading_bus_stop(cleaned_stops)
+
+    # 2) If we have less than 2 usable stops, return empty-ish result
     if len(cleaned_stops) < 2:
         return {
             "route_id": route_id,
@@ -190,18 +215,29 @@ def process_route(
             "total_segments": 0,
             "google_maps_url": None,
             "google_maps_urls": [],
+            "google_maps_my_location_url": None,
+            "google_maps_my_location_urls": [],
             "segments": [],
         }
 
-    # Build full-route links (this is what drivers likely want)
+    # 3) Full-route links (fixed-origin)
+    full_chunks = split_stops_for_mobile_chain(cleaned_stops, max_waypoints=MAX_URL_WAYPOINTS)
+    _assert_chained_coverage(cleaned_stops, full_chunks)
+
     full_route_links = google_maps_links_from_addresses(
         cleaned_stops,
-        max_stops_per_url=MAX_STOPS_PER_URL,
-        overlap=URL_OVERLAP,
+        max_waypoints=MAX_URL_WAYPOINTS,
     )
     primary_full_link = full_route_links[0] if full_route_links else None
 
-    # Segment for Directions API (optional)
+    # 3b) Full-route links (My Location origin omitted)
+    my_loc_links = google_maps_my_location_links_from_addresses(
+        cleaned_stops,
+        max_waypoints=MAX_URL_WAYPOINTS,
+    )
+    primary_my_loc = my_loc_links[0] if my_loc_links else None
+
+    # 4) Segment for Directions API (optional)
     segments_addresses = split_stops_into_segments(cleaned_stops, MAX_WAYPOINTS)
 
     processed_segments: List[Dict] = []
@@ -221,13 +257,22 @@ def process_route(
                 directions_data = None
                 error_message = str(e)
 
-        # Build one-or-more links for THIS segment using the same URL chunking logic.
+        # Segment links (fixed-origin)
+        seg_chunks = split_stops_for_mobile_chain(segment, max_waypoints=MAX_URL_WAYPOINTS)
+        _assert_chained_coverage(segment, seg_chunks)
+
         seg_links = google_maps_links_from_addresses(
             segment,
-            max_stops_per_url=MAX_STOPS_PER_URL,
-            overlap=URL_OVERLAP,
+            max_waypoints=MAX_URL_WAYPOINTS,
         )
         seg_primary = seg_links[0] if seg_links else None
+
+        # Segment links (My Location)
+        seg_my_loc_links = google_maps_my_location_links_from_addresses(
+            segment,
+            max_waypoints=MAX_URL_WAYPOINTS,
+        )
+        seg_my_loc_primary = seg_my_loc_links[0] if seg_my_loc_links else None
 
         processed_segments.append(
             {
@@ -237,6 +282,8 @@ def process_route(
                 "waypoints": waypoints,
                 "google_maps_url": seg_primary,
                 "google_maps_urls": seg_links,
+                "google_maps_my_location_url": seg_my_loc_primary,
+                "google_maps_my_location_urls": seg_my_loc_links,
                 "directions": directions_data,
                 "error": error_message,
             }
@@ -249,6 +296,8 @@ def process_route(
         "total_segments": len(processed_segments),
         "google_maps_url": primary_full_link,
         "google_maps_urls": full_route_links,
+        "google_maps_my_location_url": primary_my_loc,
+        "google_maps_my_location_urls": my_loc_links,
         "segments": processed_segments,
     }
 
@@ -267,7 +316,6 @@ def process_routes(
     - Sorts by sequence
     - Calls process_route()
     """
-
     df_filtered = df.copy()
 
     if route_id:
@@ -318,8 +366,7 @@ def process_routes(
             route_result["debug_addresses"] = debug_lines
             route_result["limits"] = {
                 "MAX_WAYPOINTS": MAX_WAYPOINTS,
-                "MAX_STOPS_PER_URL": MAX_STOPS_PER_URL,
-                "URL_OVERLAP": URL_OVERLAP,
+                "MAX_URL_WAYPOINTS": MAX_URL_WAYPOINTS,
             }
 
         routes_results.append(route_result)
