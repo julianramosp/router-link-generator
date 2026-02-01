@@ -1,0 +1,642 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Route Uploader</title>
+  <style>
+    :root{
+      --bg: #f6fbff;
+      --card: #ffffff;
+      --text: #0b1b2b;
+      --muted: #42566b;
+      --border: #d7e4f2;
+      --primary: #2563eb;   /* azul amigable */
+      --primary2:#1d4ed8;
+      --ok:#166534;
+      --warn:#92400e;
+      --bad:#991b1b;
+      --shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+      --radius: 18px;
+      --focus: 3px solid rgba(37,99,235,.35);
+      --font: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+
+    *{ box-sizing: border-box; }
+    body{
+      margin:0; padding:0;
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.35;
+    }
+
+    .wrap{
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 22px 16px 40px;
+    }
+
+    header{
+      display:flex; flex-direction:column; gap:10px;
+      margin-bottom: 16px;
+    }
+
+    .title{
+      font-size: clamp(24px, 3vw, 34px);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+    .subtitle{
+      font-size: clamp(16px, 2.1vw, 20px);
+      color: var(--muted);
+      max-width: 70ch;
+    }
+
+    .card{
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 18px;
+      margin-top: 14px;
+    }
+
+    .steps{
+      display:flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 6px;
+    }
+    .chip{
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-size: 15px;
+      color: var(--muted);
+      background: #f9fcff;
+    }
+
+    .uploader{
+      display:grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 14px;
+      align-items: stretch;
+    }
+
+    @media (max-width: 760px){
+      .uploader{ grid-template-columns: 1fr; }
+    }
+
+    .dropzone{
+      border: 2px dashed #b9d2ee;
+      border-radius: var(--radius);
+      padding: 18px;
+      background: #f1f8ff;
+      min-height: 180px;
+
+      display:flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 12px;
+      text-align: center;
+    }
+
+    .dropzone.dragover{
+      background: #e7f2ff;
+      border-color: var(--primary);
+      outline: var(--focus);
+    }
+
+    .big{
+      font-size: 20px;
+      font-weight: 800;
+    }
+
+    .hint{
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .row{
+      display:flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-top: 6px;
+    }
+
+    button{
+      cursor:pointer;
+      border: 0;
+      border-radius: 14px;
+      padding: 14px 18px;
+      font-size: 18px;
+      font-weight: 800;
+      min-width: 170px;
+    }
+
+    button:focus{ outline: var(--focus); }
+
+    .btn-primary{
+      background: var(--primary);
+      color: #fff;
+    }
+    .btn-primary:hover{ background: var(--primary2); }
+
+    .btn-ghost{
+      background: #eef5ff;
+      color: #113b86;
+      border: 1px solid #cfe2ff;
+    }
+    .btn-ghost:hover{ background: #e6f0ff; }
+
+    .panel{
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      background: #fbfdff;
+      height: 100%;
+    }
+
+    .label{
+      font-weight: 800;
+      margin-bottom: 8px;
+      font-size: 18px;
+    }
+    .small{
+      font-size: 15px;
+      color: var(--muted);
+    }
+
+    .filebox{
+      margin-top: 10px;
+      padding: 12px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: #ffffff;
+    }
+
+    .status{
+      display:flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 10px;
+      font-size: 16px;
+      color: var(--muted);
+    }
+
+    .spinner{
+      width: 18px; height: 18px;
+      border-radius: 999px;
+      border: 3px solid #cfe2ff;
+      border-top-color: var(--primary);
+      animation: spin 0.9s linear infinite;
+      display:none;
+    }
+    .spinner.on{ display:inline-block; }
+
+    @keyframes spin{ to { transform: rotate(360deg); } }
+
+    .msg{
+      margin-top: 12px;
+      border-radius: 14px;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      background: #ffffff;
+      font-size: 16px;
+      display:none;
+    }
+
+    .msg.ok{ display:block; border-color: #bbf7d0; background:#f0fdf4; color: var(--ok); }
+    .msg.warn{ display:block; border-color:#fde68a; background:#fffbeb; color: var(--warn); }
+    .msg.bad{ display:block; border-color:#fecaca; background:#fef2f2; color: var(--bad); }
+
+    .results{
+      margin-top: 12px;
+      display:none;
+    }
+    .results.on{ display:block; }
+
+    .links{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .linkcard{
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px;
+      background: #fff;
+      display:flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+    }
+
+    .linkleft{
+      min-width: 240px;
+    }
+
+    .k{
+      font-size: 14px;
+      color: var(--muted);
+    }
+    .v{
+      font-size: 16px;
+      font-weight: 800;
+      margin-top: 4px;
+      word-break: break-word;
+    }
+
+    .actions{
+      display:flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .mini{
+      min-width: auto;
+      padding: 10px 12px;
+      font-size: 16px;
+      border-radius: 12px;
+    }
+
+    .footer{
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    /* Accesibilidad: targets grandes y alto contraste */
+    a{ color: var(--primary2); font-weight: 800; }
+    a:focus{ outline: var(--focus); border-radius: 10px; }
+
+    input[type="file"]{
+      position:absolute;
+      left:-9999px;
+    }
+
+    .config{
+      display:flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-top: 10px;
+    }
+
+    .field{
+      display:flex;
+      gap: 8px;
+      align-items:center;
+      flex-wrap: wrap;
+    }
+
+    .field input{
+      padding: 12px 12px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      font-size: 16px;
+      width: min(520px, 100%);
+    }
+    .field input:focus{ outline: var(--focus); }
+  </style>
+</head>
+
+<body>
+  <div class="wrap">
+    <header>
+        <div class="title">Upload Route PDF</div>
+        <div class="subtitle">
+            1) Select or drag a PDF file. 2) Click <b>Process</b>. 3) Open the links in Google Maps.
+        </div>
+      <div class="steps" aria-label="Pasos">
+        <div class="chip">Step 1: Choose PDF</div>
+        <div class="chip">Step 2: Process</div>
+        <div class="chip">Step 3: Open links</div>
+      </div>
+    </header>
+
+    <div class="card">
+      <div class="uploader">
+        <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="Zona para arrastrar PDF">
+          <div class="big">Drag your PDF here</div>
+          <div class="hint">or click “Choose PDF”</div>
+
+          <div class="row">
+            <button class="btn-ghost" id="btnPick" type="button">Choose PDF</button>
+            <button class="btn-primary" id="btnUpload" type="button" disabled>Process</button>
+          </div>
+
+          <input id="fileInput" type="file" accept="application/pdf" />
+        </div>
+
+        <div class="panel">
+            <div class="label">Selected file</div>
+            <div class="small">
+                PDF files only. If you don’t have a PDF, please export or convert your route sheet to PDF first.
+            </div>
+
+          <div class="filebox" id="fileBox">
+            <div class="k">Name</div>
+            <div class="v" id="fileName">None</div>
+            <div class="k" style="margin-top:8px;">Size</div>
+            <div class="v" id="fileSize">—</div>
+          </div>
+
+          <div class="config" aria-label="Configuración">
+            <div class="field">
+              <label for="apiUrl" class="k"><b>API URL</b></label>
+              <input id="apiUrl" type="text" value="http://127.0.0.1:8000/api/process_pdf" />
+            </div>
+            <div class="small">If you publish this app, change this URL to your public domain.</div>
+          </div>
+
+          <div class="status" aria-live="polite">
+            <span class="spinner" id="spinner" aria-hidden="true"></span>
+            <span id="statusText">Ready to load.</span>
+          </div>
+
+          <div class="msg" id="msgBox"></div>
+        </div>
+      </div>
+
+      <div class="results" id="results">
+        <div class="label">Results</div>
+        <div class="small" id="summary"></div>
+
+        <div class="links" id="links"></div>
+
+        <div class="footer">
+          Tip: On iPhone, you can tap "Open" to allow Google Maps to use your current location. 
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ====== CONFIG ======
+    const DEFAULT_API_URL = "/api/process_pdf";
+
+    // ====== ELEMENTS ======
+    const dropzone = document.getElementById("dropzone");
+    const fileInput = document.getElementById("fileInput");
+    const btnPick = document.getElementById("btnPick");
+    const btnUpload = document.getElementById("btnUpload");
+
+    const fileNameEl = document.getElementById("fileName");
+    const fileSizeEl = document.getElementById("fileSize");
+
+    const spinner = document.getElementById("spinner");
+    const statusText = document.getElementById("statusText");
+    const msgBox = document.getElementById("msgBox");
+
+    const results = document.getElementById("results");
+    const summary = document.getElementById("summary");
+    const linksEl = document.getElementById("links");
+
+    const apiUrlInput = document.getElementById("apiUrl");
+
+    let selectedFile = null;
+
+    // ====== HELPERS ======
+    function humanSize(bytes){
+      if (!bytes && bytes !== 0) return "—";
+      const units = ["B", "KB", "MB", "GB"];
+      let i = 0, n = bytes;
+      while (n >= 1024 && i < units.length - 1){ n /= 1024; i++; }
+      return `${n.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+    }
+
+    function setStatus(text, loading=false){
+      statusText.textContent = text;
+      spinner.classList.toggle("on", loading);
+    }
+
+    function showMsg(type, text){
+      msgBox.className = "msg " + type; // ok | warn | bad
+      msgBox.textContent = text;
+    }
+
+    function hideMsg(){
+      msgBox.className = "msg";
+      msgBox.textContent = "";
+      msgBox.style.display = "none";
+    }
+
+    function enableProcess(enable){
+      btnUpload.disabled = !enable;
+    }
+
+    function setFile(file){
+      selectedFile = file;
+      if (!file){
+        fileNameEl.textContent = "None";
+        fileSizeEl.textContent = "—";
+        enableProcess(false);
+        return;
+      }
+      fileNameEl.textContent = file.name;
+      fileSizeEl.textContent = humanSize(file.size);
+      enableProcess(true);
+      setStatus("File ready. Click “Process”.", false);
+      msgBox.style.display = "none";
+      results.classList.remove("on");
+      linksEl.innerHTML = "";
+    }
+
+    function safeText(s){
+      return (s ?? "").toString();
+    }
+
+    async function copyToClipboard(text){
+      try{
+        await navigator.clipboard.writeText(text);
+        showMsg("ok", "Copied to clipboard.");
+        setTimeout(() => { msgBox.style.display = "none"; }, 1200);
+      } catch (e){
+        showMsg("warn", "I couldn't copy it automatically. You can select the link and copy it manually.");
+      }
+    }
+
+    function createLinkCard(title, url){
+      const card = document.createElement("div");
+      card.className = "linkcard";
+
+      const left = document.createElement("div");
+      left.className = "linkleft";
+
+      const k = document.createElement("div");
+      k.className = "k";
+      k.textContent = title;
+
+      const v = document.createElement("div");
+      v.className = "v";
+      v.textContent = url;
+
+      left.appendChild(k);
+      left.appendChild(v);
+
+      const actions = document.createElement("div");
+      actions.className = "actions";
+
+      const a = document.createElement("a");
+      a.href = url;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.textContent = "Open";
+      a.className = "btn-primary mini";
+      a.style.textDecoration = "none";
+      a.style.display = "inline-block";
+
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "btn-ghost mini";
+      b.textContent = "Copy";
+      b.addEventListener("click", () => copyToClipboard(url));
+
+      actions.appendChild(a);
+      actions.appendChild(b);
+
+      card.appendChild(left);
+      card.appendChild(actions);
+
+      return card;
+    }
+
+    // ====== EVENTS: pick file ======
+    btnPick.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (!f) return;
+      if (f.type !== "application/pdf"){
+        showMsg("bad", "This file is not a PDF. Please select a PDF file.");
+        setFile(null);
+        return;
+      }
+      setFile(f);
+    });
+
+    // ====== drag & drop ======
+    ["dragenter", "dragover"].forEach(evt => {
+      dropzone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropzone.classList.add("dragover");
+      });
+    });
+
+    ["dragleave", "drop"].forEach(evt => {
+      dropzone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropzone.classList.remove("dragover");
+      });
+    });
+
+    dropzone.addEventListener("drop", (e) => {
+      const f = e.dataTransfer.files && e.dataTransfer.files[0];
+      if (!f) return;
+      if (f.type !== "application/pdf"){
+        showMsg("bad", "This file is not a PDF. Please select a PDF file.");
+        setFile(null);
+        return;
+      }
+      setFile(f);
+    });
+
+    // Permitir activar dropzone con Enter/Space (accesible)
+    dropzone.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " "){
+        e.preventDefault();
+        fileInput.click();
+      }
+    });
+
+    // ====== upload ======
+    btnUpload.addEventListener("click", async () => {
+      if (!selectedFile) return;
+
+      const apiUrl = (apiUrlInput.value || "").trim() || DEFAULT_API_URL;
+
+      setStatus("Procesando PDF… por favor espera.", true);
+      showMsg("warn", "Procesando… no cierres esta página.");
+
+      btnUpload.disabled = true;
+      btnPick.disabled = true;
+
+      try{
+        const form = new FormData();
+        form.append("file", selectedFile);
+
+        const res = await fetch(apiUrl, {
+          method: "POST",
+          body: form
+        });
+
+        const data = await res.json().catch(() => null);
+
+        if (!res.ok){
+          const detail = data?.detail ? JSON.stringify(data.detail) : safeText(data);
+          throw new Error(`Error ${res.status}: ${detail || "Invalid response"}`);
+        }
+
+        // Render summary + links
+        const parsedCount = data?.parsed_stops_count ?? null;
+        const cleanCount = data?.clean_stops_count ?? null;
+
+        // Prefer "my location" urls if present
+        const routes = data?.result?.routes || [];
+        let allLinks = [];
+
+        routes.forEach((r, idx) => {
+          const routeTitle = `Route ${safeText(r.route_id || (idx+1))} (${safeText(r.route_type || "—")})`;
+
+          const myUrls = r.google_maps_my_location_urls || [];
+          const urls = r.google_maps_urls || [];
+
+          // Prioridad: my_location_urls (mejor para iPhone)
+          const preferred = myUrls.length ? myUrls : urls;
+
+          preferred.forEach((u, i) => {
+            allLinks.push({
+              title: `${routeTitle} • Segment    ${i+1}`,
+              url: u
+            });
+          });
+        });
+
+        // Update UI
+        results.classList.add("on");
+        linksEl.innerHTML = "";
+
+        if (allLinks.length === 0){
+          showMsg("warn", "I processed the PDF but didn't find any links to display.");
+          summary.textContent = `Stops detected: ${parsedCount ?? "—"} • Clean stops: ${cleanCount ?? "—"}`;
+        } else {
+            showMsg("ok", "Done. You can now open the links.");
+            summary.textContent = `Stops detected: ${parsedCount ?? "—"} • Clean stops: ${cleanCount ?? "—"} • Links: ${allLinks.length}`;
+          allLinks.forEach(item => linksEl.appendChild(createLinkCard(item.title, item.url)));
+        }
+
+        setStatus("Filled.", false);
+
+      } catch (err){
+        console.error(err);
+        showMsg("bad", "Could not process. Please check that the server is running and that the API URL is correct.");
+        setStatus("Error processing.", false);
+      } finally {
+        btnUpload.disabled = !selectedFile;
+        btnPick.disabled = false;
+      }
+    });
+
+    // init
+    apiUrlInput.value = DEFAULT_API_URL;
+    setFile(null);
+  </script>
+</body>
+</html>
