@@ -4,7 +4,11 @@ import tempfile
 
 from app.services.file_handler import read_routes_csv
 from app.routes.process_routes import process_routes
-from app.services.pdf_parser import parse_route_pdf  # 👈 NEW
+from app.services.pdf_parser import parse_route_pdf
+from app.routes.utils import merge_fragment_stops
+
+# ✅ Import the cleaning function (you must create it if it doesn't exist yet)
+from app.routes.utils import clean_stops  # <-- adjust path if needed
 
 router = APIRouter()
 
@@ -13,20 +17,15 @@ router = APIRouter()
 async def process_route_file(file: UploadFile = File(...)):
     """
     Receive a CSV file, process all routes, and return a basic status.
-    The detailed outputs (links, HTML maps) are written to the outputs/ folder.
     """
-
-    # 1) Save uploaded CSV to a temp directory
     tmp_dir = Path(tempfile.mkdtemp())
     csv_path = tmp_dir / "upload.csv"
 
     with open(csv_path, "wb") as f:
         f.write(await file.read())
 
-    # 2) Reuse your existing CSV loader (same behavior as CLI)
     df = read_routes_csv(str(csv_path))
 
-    # 3) Call your existing processing logic (same as CLI)
     result = process_routes(
         df=df,
         route_id=None,
@@ -34,7 +33,6 @@ async def process_route_file(file: UploadFile = File(...)):
         split_mobile=False,
     )
 
-    # 4) Return a simple message + result summary
     return {
         "status": "ok",
         "message": "CSV routes processed successfully.",
@@ -45,38 +43,41 @@ async def process_route_file(file: UploadFile = File(...)):
 @router.post("/process_pdf")
 async def process_route_pdf_endpoint(file: UploadFile = File(...)):
     """
-    Receive a PDF route sheet, parse stops, and process routes.
-    MVP: we only support structured PDFs where each stop line
-    starts with an address (line starting with digits).
+    Receive a PDF route sheet, parse stops, clean stops, and build route links.
     """
-
-    # 1) Save uploaded PDF to a temp directory
     tmp_dir = Path(tempfile.mkdtemp())
     pdf_path = tmp_dir / "upload.pdf"
 
     with open(pdf_path, "wb") as f:
         f.write(await file.read())
 
-    # 2) Parse PDF into a DataFrame compatible with process_routes
     df = parse_route_pdf(str(pdf_path))
-    print("DEBUG PDF ROWS:", len(df))
-    print(df[["sequence", "address"]].to_string(index=False))
 
-    # Debug (optional): print columns to verify
-    print("DEBUG PDF COLUMNS:", list(df.columns))
+    parsed_stops = (
+        df[["sequence", "time", "stop_name", "address"]]
+        .sort_values("sequence")
+        .to_dict(orient="records")
+    )
+    parsed_stops = merge_fragment_stops(parsed_stops)
 
-    # 3) Reuse the same processing logic as CSV
+    cleaned_stops, dropped_stops = clean_stops(parsed_stops)
+
+    # IMPORTANT: process_routes must support stops=... (we'll fix process_routes.py next)
     result = process_routes(
-        df=df,
+        stops=cleaned_stops,
         route_id=None,
         rtype=None,
         split_mobile=False,
     )
 
-    # 4) Return JSON with the same structure we already use
     return {
         "status": "ok",
         "message": "PDF routes processed successfully.",
+        "parsed_stops_count": len(parsed_stops),
+        "clean_stops_count": len(cleaned_stops),
+        "dropped_stops_count": len(dropped_stops),
+        # For debugging; you can remove later:
+        "parsed_stops": parsed_stops,
+        "dropped_stops": dropped_stops,
         "result": result,
     }
-

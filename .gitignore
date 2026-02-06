@@ -7,3 +7,7 @@ data_raw/
 data_processed/
 *.html
 *.txt
+!app/web/
+!app/web/index.html
+app/services/ocr_service.py
+example_route.pdf
